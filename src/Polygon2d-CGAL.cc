@@ -2,10 +2,13 @@
 #include "polyset.h"
 #include "printutils.h"
 
+#pragma push_macro("NDEBUG")
+#undef NDEBUG
 #include <CGAL/Exact_predicates_inexact_constructions_kernel.h>
 #include <CGAL/Constrained_Delaunay_triangulation_2.h>
 #include <CGAL/Triangulation_face_base_with_info_2.h>
 #include <CGAL/Polygon_2.h>
+#pragma pop_macro("NDEBUG")
 #include <iostream>
 
 namespace Polygon2DCGAL {
@@ -84,20 +87,6 @@ mark_domains(CDT &cdt)
 
 }
 
-#define OPENSCAD_CGAL_ERROR_BEGIN \
-	CGAL::Failure_behaviour old_behaviour = CGAL::set_error_behaviour(CGAL::THROW_EXCEPTION); \
-	try {
-
-#define OPENSCAD_CGAL_ERROR_END(errorstr, onerror) \
-  } \
-	catch (const CGAL::Precondition_exception &e) { \
-		PRINTB(errorstr ": %s", e.what()); \
-		CGAL::set_error_behaviour(old_behaviour); \
-		onerror; \
-	} \
-	CGAL::set_error_behaviour(old_behaviour);
-  
-
 /*!
 	Triangulates this polygon2d and returns a 2D PolySet.
 */
@@ -107,7 +96,10 @@ PolySet *Polygon2d::tessellate() const
 	auto polyset = new PolySet(*this);
 
 	Polygon2DCGAL::CDT cdt; // Uses a constrained Delaunay triangulator.
-	OPENSCAD_CGAL_ERROR_BEGIN;
+
+	CGAL::Failure_behaviour old_behaviour = CGAL::set_error_behaviour(CGAL::THROW_EXCEPTION);
+	try {
+
 	// Adds all vertices, and add all contours as constraints.
 	for (const auto &outline : this->outlines()) {
 		// Start with last point
@@ -120,8 +112,15 @@ PolySet *Polygon2d::tessellate() const
 			}
 		}
 	}
-	OPENSCAD_CGAL_ERROR_END("CGAL error in Polygon2d::tesselate()", return nullptr);
 
+  }
+	catch (const CGAL::Precondition_exception &e) {
+		PRINTB("CGAL error in Polygon2d::tesselate(): %s", e.what());
+		CGAL::set_error_behaviour(old_behaviour);
+		return nullptr;
+	}
+	CGAL::set_error_behaviour(old_behaviour);
+  
 	// To extract triangles which is part of our polygon, we need to filter away
 	// triangles inside holes.
 	mark_domains(cdt);

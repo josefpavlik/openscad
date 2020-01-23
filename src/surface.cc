@@ -33,7 +33,7 @@
 #include "printutils.h"
 #include "fileutils.h"
 #include "handle_dep.h"
-#include "lodepng.h"
+#include "ext/lodepng/lodepng.h"
 
 #include <cstdint>
 #include <array>
@@ -54,7 +54,7 @@ class SurfaceModule : public AbstractModule
 {
 public:
 	SurfaceModule() { }
-	virtual AbstractNode *instantiate(const Context *ctx, const ModuleInstantiation *inst, EvalContext *evalctx) const;
+	AbstractNode *instantiate(const std::shared_ptr<Context>& ctx, const ModuleInstantiation *inst, const std::shared_ptr<EvalContext>& evalctx) const override;
 };
 
 typedef std::unordered_map<std::pair<int,int>, double, boost::hash<std::pair<int,int>>> img_data_t;
@@ -63,16 +63,16 @@ class SurfaceNode : public LeafNode
 {
 public:
 	VISITABLE();
-	SurfaceNode(const ModuleInstantiation *mi) : LeafNode(mi) { }
-	virtual std::string toString() const;
-	virtual std::string name() const { return "surface"; }
+	SurfaceNode(const ModuleInstantiation *mi) : LeafNode(mi), center(false), invert(false), convexity(1) { }
+	std::string toString() const override;
+	std::string name() const override { return "surface"; }
 
 	Filename filename;
 	bool center;
 	bool invert;
 	int convexity;
 	
-	virtual const Geometry *createGeometry() const;
+	const Geometry *createGeometry() const override;
 private:
 	void convert_image(img_data_t &data, std::vector<uint8_t> &img, unsigned int width, unsigned int height) const;
 	bool is_png(std::vector<uint8_t> &img) const;
@@ -80,34 +80,32 @@ private:
 	img_data_t read_png_or_dat(std::string filename) const;
 };
 
-AbstractNode *SurfaceModule::instantiate(const Context *ctx, const ModuleInstantiation *inst, EvalContext *evalctx) const
+AbstractNode *SurfaceModule::instantiate(const std::shared_ptr<Context>& ctx, const ModuleInstantiation *inst, const std::shared_ptr<EvalContext>& evalctx) const
 {
 	auto node = new SurfaceNode(inst);
-	node->center = false;
-	node->invert = false;
-	node->convexity = 1;
 
-	AssignmentList args{Assignment("file"), Assignment("center"), Assignment("convexity")};
+	AssignmentList args{assignment("file"), assignment("center"), assignment("convexity")};
+	AssignmentList optargs{assignment("center"),assignment("invert")};
 
-	Context c(ctx);
-	c.setVariables(args, evalctx);
+	ContextHandle<Context> c{Context::create<Context>(ctx)};
+	c->setVariables(evalctx, args, optargs);
 
-	auto fileval = c.lookup_variable("file");
-	auto filename = lookup_file(fileval->isUndefined() ? "" : fileval->toString(), inst->path(), c.documentPath());
+	auto fileval = c->lookup_variable("file");
+	auto filename = lookup_file(fileval->isUndefined() ? "" : fileval->toString(), inst->path(), c->documentPath());
 	node->filename = filename;
 	handle_dep(fs::path(filename).generic_string());
 
-	auto center = c.lookup_variable("center", true);
+	auto center = c->lookup_variable("center", true);
 	if (center->type() == Value::ValueType::BOOL) {
 		node->center = center->toBool();
 	}
 
-	auto convexity = c.lookup_variable("convexity", true);
+	auto convexity = c->lookup_variable("convexity", true);
 	if (convexity->type() == Value::ValueType::NUMBER) {
 		node->convexity = static_cast<int>(convexity->toDouble());
 	}
 
-	auto invert = c.lookup_variable("invert", true);
+	auto invert = c->lookup_variable("invert", true);
 	if (invert->type() == Value::ValueType::BOOL) {
 		node->invert = invert->toBool();
 	}
@@ -138,8 +136,19 @@ img_data_t SurfaceNode::read_png_or_dat(std::string filename) const
 {
 	img_data_t data;
 	std::vector<uint8_t> png;
-	
-	lodepng::load_file(png, filename);
+	int ret_val = 0;	
+	try{
+		 ret_val = lodepng::load_file(png, filename);
+	}catch(std::bad_alloc &ba){
+		
+		PRINTB("WARNING: bad_alloc caught for '%s'.", ba.what());
+		return data;	
+	}
+
+	if(ret_val == 78){
+		PRINTB("WARNING: The file '%s' couldn't be opened.", filename);
+		return data;	
+	}
 	
 	if (!is_png(png)) {
 		png.clear();
@@ -302,7 +311,7 @@ const Geometry *SurfaceNode::createGeometry() const
 
 std::string SurfaceNode::toString() const
 {
-	std::stringstream stream;
+	std::ostringstream stream;
 	fs::path path{static_cast<std::string>(this->filename)}; // gcc-4.6
 
 	stream << this->name() << "(file = " << this->filename
@@ -316,5 +325,8 @@ std::string SurfaceNode::toString() const
 
 void register_builtin_surface()
 {
-	Builtins::init("surface", new SurfaceModule());
+	Builtins::init("surface", new SurfaceModule(),
+				{
+					"surface(string, center = false, invert = false, number)",
+				});
 }

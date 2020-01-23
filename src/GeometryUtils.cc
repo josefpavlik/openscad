@@ -1,5 +1,5 @@
 #include "GeometryUtils.h"
-#include "tesselator.h"
+#include "ext/libtess2/Include/tesselator.h"
 #include "printutils.h"
 #include "Reindexer.h"
 #include <boost/lexical_cast.hpp>
@@ -188,7 +188,7 @@ public:
 
 	Returns true on error, false on success.
 */
-bool GeometryUtils::tessellatePolygonWithHoles(const Vector3f *vertices,
+bool GeometryUtils::tessellatePolygonWithHoles(const std::vector<Vector3f>& vertices,
 																							 const std::vector<IndexedFace> &faces, 
 																							 std::vector<IndexedTriangle> &triangles,
 																							 const Vector3f *normal)
@@ -265,7 +265,7 @@ bool GeometryUtils::tessellatePolygonWithHoles(const Vector3f *vertices,
   }
 
   TESSalloc ma;
-  TESStesselator* tess = 0;
+  TESStesselator* tess = nullptr;
 
   memset(&ma, 0, sizeof(ma));
   ma.memalloc = stdAlloc;
@@ -430,7 +430,7 @@ bool GeometryUtils::tessellatePolygon(const Polygon &polygon, Polygons &triangle
 	}
 	if (currface.front() == currface.back()) currface.pop_back();
 	if (currface.size() >= 3) { // Cull empty triangles
-		const auto verts = uniqueVertices.getArray();
+		const auto& verts = uniqueVertices.getArray();
 		std::vector<IndexedTriangle> indexedtriangles;
 		err = tessellatePolygonWithHoles(verts, indexedfaces, indexedtriangles, normal);
 		for (const auto &t : indexedtriangles) {

@@ -1,1 +1,1 @@
-ERROR: Experimental feature not enabled: 'lc-else'. Please check preferences.
+ECHO: x = 2, y = 5

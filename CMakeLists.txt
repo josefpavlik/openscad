@@ -3,62 +3,242 @@
 #
 # Configuration variables
 #   -DHEADLESS=<ON|OFF>
+#   -DNULLGL=<ON|OFF>
+#   -DSNAPSHOT=<ON|OFF>
+#   -DEXPERIMENTAL=<ON|OFF>
 #
-#
+#  TODO
+#   find packages for spnav, hidapi
+
 
 if(APPLE)
-  set(CMAKE_OSX_DEPLOYMENT_TARGET 10.8)
+  set(CMAKE_OSX_DEPLOYMENT_TARGET 10.9)
 endif()
-cmake_minimum_required(VERSION 3.5.0)
+cmake_minimum_required(VERSION 3.3)
 
-
-if(HEADLESS)
-  list(APPEND CONFIG_OPTIONS "HEADLESS")
-endif(HEADLESS)
-message(STATUS "Configuration: ${CONFIG_OPTIONS}")
+# CMP0071 introduced in 3.10.2
+if (CMAKE_VERSION VERSION_GREATER "3.10.1") 
+  cmake_policy(SET CMP0071 OLD)
+endif()
 
 project(openscad)
 
-set(CMAKE_CXX_STANDARD 11)
-if(APPLE)
-  # Needed for deployment target 10.8 as cmake doesn't know about the libc++
-  set(CMAKE_CXX_FLAGS "-stdlib=libc++")
+option(EXPERIMENTAL "Enable Experimental Features" OFF)
+option(SNAPSHOT "Create dev snapshot, uses nightly icons" OFF)
+option(HEADLESS "Build without GUI frontend" OFF)
+option(NULLGL "Build without OpenGL, (implies HEADLESS=ON) " OFF)
+option(IDPREFIX "Prefix CSG nodes with index # (debugging purposes only, will break node cache)" OFF)
+
+if (NULLGL)
+  set(HEADLESS ON)
+endif()
+if(EXPERIMENTAL)
+  add_definitions(-DENABLE_EXPERIMENTAL)
+endif()
+if(IDPREFIX)
+  add_definitions(-DIDPREFIX)
 endif()
 
-set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/Modules/")
-set(CMAKE_PREFIX_PATH "$ENV{OPENSCAD_LIBRARIES}")
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/objects")
+set(AUTOGEN_BUILD_DIR "${CMAKE_SOURCE_DIR}/objects")
+file(MAKE_DIRECTORY ${AUTOGEN_BUILD_DIR})
 
-find_package(Eigen3 REQUIRED QUIET)
-message(STATUS "Eigen3: ${EIGEN3_VERSION_STRING}")
-include_directories(${EIGEN3_INCLUDE_DIRS})
+# Default to Release build
+#if(NOT CMAKE_BUILD_TYPE)
+#  message(STATUS "CMAKE_BUILD_TYPE not specified.  Defaulting to 'Release'")
+#  message(STATUS "Usage: cmake -DCMAKE_BUILD_TYPE=[Debug|Release|RelWithDebInfo|MinSizeRel] .")
+#  set(CMAKE_BUILD_TYPE Release)
+#else()
+#  message(STATUS "CMAKE_BUILD_TYPE: ${CMAKE_BUILD_TYPE}")
+#endif()
 
-find_package(Boost 1.36 REQUIRED COMPONENTS filesystem system thread regex program_options QUIET)
-message(STATUS "Boost: ${Boost_MAJOR_VERSION}.${Boost_MINOR_VERSION}.${Boost_SUBMINOR_VERSION}")
-include_directories(${Boost_INCLUDE_DIRS})
+add_compile_options("$<$<CONFIG:DEBUG>:-DDEBUG>")
+# Use same optimization as qmake build
+string(REPLACE "-O3" "-O2" CMAKE_CXX_FLAGS_RELEASE ${CMAKE_CXX_FLAGS_RELEASE})
 
-find_package(CGAL REQUIRED QUIET)
+set(CMAKE_CXX_STANDARD 11)
+add_definitions(-D_REENTRANT -DUNICODE -D_UNICODE)
+# Stack size 8MB; github issue 116
+add_definitions(-DSTACKSIZE=8388608)
+
+if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -frounding-math")
+  if (WIN32) # gcc bug spams warnings, See issue #2771
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-attributes")
+  endif()
+endif()
+
+set(BOOST_DIRECTLY_REQUIRED_LIBRARIES filesystem system thread regex program_options)
+
+find_package(PkgConfig)
+
+macro(find_graphics)
+  # NULLGL - Allow us to build without OpenGL(TM). run 'cmake .. -DNULLGL=1'
+  # Most tests will fail, but it can be used for testing/experiments
+  if(NULLGL)
+    add_definitions(-DNULLGL)
+  else()
+    find_package(OpenGL REQUIRED QUIET)
+    list(APPEND COMMON_LIBRARIES ${OPENGL_LIBRARIES})
+
+    if(MSVC) 
+      find_package(GLEW CONFIG REQUIRED QUIET)
+      message(STATUS "GLEW: Using target GLEW::GLEW")
+      list(APPEND COMMON_LIBRARIES GLEW::GLEW)
+
+      find_path(OPENCSG_INCLUDE_DIRS opencsg/opencsg.h)
+      include_directories("${OPENCSG_INCLUDE_DIRS}/opencsg")
+    else()
+      find_package(GLEW REQUIRED)
+      message(STATUS "GLEW_INCLUDE_DIR: ${GLEW_INCLUDE_DIR}")
+      message(STATUS "GLEW_LIBRARY: ${GLEW_LIBRARY}")
+      include_directories("${GLEW_INCLUDE_DIR}")
+      list(APPEND COMMON_LIBRARIES ${GLEW_LIBRARY})
+
+      find_path(OPENCSG_INCLUDE_DIRS opencsg.h)
+      include_directories("${OPENCSG_INCLUDE_DIRS}")
+    endif()
+    find_library(OPENCSG_LIBRARY opencsg)
+    list(APPEND COMMON_LIBRARIES ${OPENCSG_LIBRARY})
+
+    message(STATUS "OpenCSG: ${OPENCSG_VERSION_STRING}")
+    add_definitions(-DENABLE_OPENCSG)
+  endif()
+endmacro(find_graphics)
+
+# NOTE FindCGAL.cmake resets the BOOST_* and Boost_* variables,
+#   because it looks for Boost itself, so it has to be called
+#   before we look for our own required boost libraries.
+find_package(CGAL REQUIRED)
 message(STATUS "CGAL: ${CGAL_MAJOR_VERSION}.${CGAL_MINOR_VERSION}")
-include_directories(${CGAL_INCLUDE_DIRS})
 add_definitions(-DENABLE_CGAL)
+if(TARGET CGAL::CGAL)
+  list(APPEND COMMON_LIBRARIES CGAL::CGAL)
+  message(STATUS "CGAL: Using target CGAL::CGAL")
+else()
+  list(APPEND COMMON_LIBRARIES ${CGAL_LIBRARY})
+  list(APPEND COMMON_LIBRARIES ${GMP_LIBRARIES})
+  list(APPEND COMMON_LIBRARIES ${MPFR_LIBRARIES})
+endif()
+# revert any changes to module path from CGAL_Macros.cmake
+if (CGAL_MODULE_PATH_IS_SET)
+  set(CMAKE_MODULE_PATH ORIGINAL_CMAKE_MODULE_PATH)
+endif()
 
-find_package(HarfBuzz 0.9.19 REQUIRED QUIET)
-message(STATUS "Harfbuzz: ${HARFBUZZ_VERSION}")
-include_directories(${HARFBUZZ_INCLUDE_DIRS})
 
-find_package(FontConfig 2.8.0 REQUIRED QUIET)
-message(STATUS "Fontconfig: ${FONTCONFIG_VERSION}")
+if (MSVC)
+  # Flex lexer options
+  set(WINCOMPAT "--wincompat --nounistd")
+  add_definitions(-D_USE_MATH_DEFINES)
+
+  message("COMMON_LIBRARIES ${COMMON_LIBRARIES}")
+  find_package(Eigen3 CONFIG REQUIRED)
+  list(APPEND COMMON_LIBRARIES Eigen3::Eigen)
+
+  set(Boost_USE_STATIC_LIBS TRUE)
+  find_package(Boost 1.36 REQUIRED COMPONENTS ${BOOST_DIRECTLY_REQUIRED_LIBRARIES} QUIET)
+  message(STATUS "Boost: ${Boost_MAJOR_VERSION}.${Boost_MINOR_VERSION}.${Boost_SUBMINOR_VERSION}")
+  message("BOOST DIRS ${Boost_INCLUDE_DIRS}")
+  include_directories(${Boost_INCLUDE_DIRS})
+  list(APPEND COMMON_LIBRARIES ${Boost_LIBRARIES})
+
+  # Check if boost dependency libraries have been found too
+  list(LENGTH BOOST_DIRECTLY_REQUIRED_LIBRARIES BOOST_DIRECTLY_REQUIRED_LIBRARIES_LENGTH)
+  list(LENGTH Boost_LIBRARIES Boost_LIBRARIES_LENGTH)
+  if(Boost_LIBRARIES_LENGTH EQUAL BOOST_DIRECTLY_REQUIRED_LIBRARIES_LENGTH)
+    message(FATAL_ERROR "No dependent Boost libraries found. Your CMake (${CMAKE_VERSION}) version might be too old for the version of boost you are using (${Boost_MAJOR_VERSION}.${Boost_MINOR_VERSION}.${Boost_SUBMINOR_VERSION}). In that case, you should have received warnings above of the type: 'Imported targets not available for Boost version ${Boost_VERSION}'")
+  endif()
+
+  find_package(harfbuzz CONFIG REQUIRED)
+  find_path(HARFBUZZ_INCLUDE_DIRS harfbuzz)
+  include_directories(${HARFBUZZ_INCLUDE_DIRS}/harfbuzz)
+  list(APPEND COMMON_LIBRARIES harfbuzz::harfbuzz)
+
+  find_package(unofficial-fontconfig CONFIG REQUIRED)
+  list(APPEND COMMON_LIBRARIES unofficial::fontconfig::fontconfig)
+  
+  find_package(unofficial-glib CONFIG REQUIRED)
+  include_directories(${GLIB2_INCLUDE_DIRS})
+  list(APPEND COMMON_LIBRARIES unofficial::glib::gio unofficial::glib::glib unofficial::glib::gmodule unofficial::glib::gobject)
+
+  find_package(double-conversion CONFIG REQUIRED)
+  list(APPEND COMMON_LIBRARIES double-conversion::double-conversion)
+
+  find_library(GETTEXT_LIBRARY libintl)
+  list(APPEND COMMON_LIBRARIES ${GETTEXT_LIBRARY})
+
+  # call before setting local CMAKE_MODULE_PATH so we use VCPKG version of FindGLEW
+  find_graphics()
+
+  # needed for Qt5QScintilla, maybe others
+  set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/Modules/")
+
+else()
+  set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/Modules/")
+  set(CMAKE_PREFIX_PATH "$ENV{OPENSCAD_LIBRARIES}")
+
+  find_package(Eigen3 QUIET)
+  if (NOT Eigen3_FOUND)
+    # Ubuntu Trusty Eigen package installs FindEigen3.cmake but assumes cmake-2.8, not cmake3
+    # See https://packages.ubuntu.com/trusty/all/libeigen3-dev/filelist
+    list(APPEND CMAKE_MODULE_PATH "/usr/share/cmake-2.8/Modules")
+    find_package(Eigen3 REQUIRED QUIET)
+    list(REMOVE_ITEM CMAKE_MODULE_PATH "/usr/share/cmake-2.8/Modules")
+  endif()
+  if (EIGEN3_VERSION)
+    message(STATUS "Eigen3: ${EIGEN3_VERSION}")
+  else()
+    message(STATUS "Eigen3: ${EIGEN3_VERSION_STRING}")
+  endif()
+  include_directories(${EIGEN3_INCLUDE_DIR})
+  add_definitions(-DEIGEN_DONT_ALIGN)
+
+  find_package(Boost 1.36 REQUIRED COMPONENTS ${BOOST_DIRECTLY_REQUIRED_LIBRARIES} QUIET)
+  message(STATUS "Boost: ${Boost_MAJOR_VERSION}.${Boost_MINOR_VERSION}.${Boost_SUBMINOR_VERSION}")
+  include_directories(${Boost_INCLUDE_DIRS})
+  list(APPEND COMMON_LIBRARIES ${Boost_LIBRARIES})
+
+  # Check if boost dependency libraries have been found too
+  list(LENGTH BOOST_DIRECTLY_REQUIRED_LIBRARIES BOOST_DIRECTLY_REQUIRED_LIBRARIES_LENGTH)
+  list(LENGTH Boost_LIBRARIES Boost_LIBRARIES_LENGTH)
+  if(Boost_LIBRARIES_LENGTH EQUAL BOOST_DIRECTLY_REQUIRED_LIBRARIES_LENGTH)
+    message(FATAL_ERROR "No dependent Boost libraries found. Your CMake (${CMAKE_VERSION}) version might be too old for the version of boost you are using (${Boost_MAJOR_VERSION}.${Boost_MINOR_VERSION}.${Boost_SUBMINOR_VERSION}). In that case, you should have received warnings above of the type: 'Imported targets not available for Boost version ${Boost_VERSION}'")
+  endif()
+
+  find_package(HarfBuzz 0.9.19 REQUIRED QUIET)
+  message(STATUS "Harfbuzz: ${HARFBUZZ_VERSION}")
+  include_directories(${HARFBUZZ_INCLUDE_DIRS})
+  list(APPEND COMMON_LIBRARIES ${HARFBUZZ_LIBRARIES})
+
+  find_package(FontConfig 2.8.0 REQUIRED QUIET)
+  message(STATUS "Fontconfig: ${FONTCONFIG_VERSION}")
+  list(APPEND COMMON_LIBRARIES ${FONTCONFIG_LIBRARIES})
+
+  find_package(GLIB2 2.26 REQUIRED QUIET)
+  message(STATUS "Glib: ${GLIB2_VERSION}")
+  include_directories(${GLIB2_INCLUDE_DIRS})
+  list(APPEND COMMON_LIBRARIES ${GLIB2_LIBRARIES})
+
+  list(APPEND COMMON_LIBRARIES double-conversion)
+
+  find_graphics()
+endif()
+
+find_package(LibZip REQUIRED QUIET)
+include_directories(${LIBZIP_INCLUDE_DIR_ZIP})
+include_directories(${LIBZIP_INCLUDE_DIR_ZIPCONF})
+list(APPEND COMMON_LIBRARIES ${LIBZIP_LIBRARY})
+add_definitions(-DENABLE_LIBZIP)
 
 find_package(Freetype 2.4.9 REQUIRED QUIET)
 message(STATUS "Freetype: ${FREETYPE_VERSION_STRING}")
 include_directories(${FREETYPE_INCLUDE_DIRS})
-
-find_package(GLIB2 2.26 REQUIRED QUIET)
-message(STATUS "Glib: ${GLIB2_VERSION}")
-include_directories(${GLIB2_INCLUDE_DIRS})
+list(APPEND COMMON_LIBRARIES ${FREETYPE_LIBRARIES})
 
 find_package(LibXml2 2.9 REQUIRED QUIET)
 message(STATUS "LibXml2: ${LIBXML2_VERSION_STRING}")
 include_directories(${LIBXML2_INCLUDE_DIR})
+list(APPEND COMMON_LIBRARIES ${LIBXML2_LIBRARIES})
 
 find_package(FLEX REQUIRED QUIET)
 message(STATUS "Flex: ${FLEX_VERSION}")
@@ -66,25 +246,44 @@ message(STATUS "Flex: ${FLEX_VERSION}")
 find_package(BISON REQUIRED QUIET)
 message(STATUS "Bison: ${BISON_VERSION}")
 
-include(CheckIncludeFileCXX)
+if(NOT MSVC)
+  find_package(Lib3MF REQUIRED QUIET)
+  add_definitions(${LIB3MF_CFLAGS})
+  include_directories(${LIB3MF_INCLUDE_DIRS})
+  list(APPEND COMMON_LIBRARIES ${LIB3MF_LIBRARIES})
+endif()
+
+# Output compilation database (compile_commands.json), so we can e.g. run clang-tidy or other tools separately
+set(CMAKE_EXPORT_COMPILE_COMMANDS "ON")
+# Use clang-tidy if run with -DCLANG_TIDY=1
+find_program(CLANG_TIDY_EXE NAMES clang-tidy)
+set(CLANG_TIDY ${CLANG_TIDY} CACHE BOOL "Enable clang-tidy")
+if(CLANG_TIDY AND CLANG_TIDY_EXE)
+  include(RegexUtils)
+  escape_string_as_regex(regex "${CMAKE_SOURCE_DIR}/src")
+  set(CMAKE_CXX_CLANG_TIDY "${CLANG_TIDY_EXE};-header-filter=${regex}")
+endif()
 
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
-
 include_directories(src)
 
-FLEX_TARGET(openscad_lexer src/lexer.l ${CMAKE_CURRENT_BINARY_DIR}/lexer.cxx DEFINES_FILE ${CMAKE_CURRENT_BINARY_DIR}/lexer.hxx)
-BISON_TARGET(openscad_parser src/parser.y ${CMAKE_CURRENT_BINARY_DIR}/parser.cxx DEFINES_FILE ${CMAKE_CURRENT_BINARY_DIR}/parser.hxx COMPILE_FLAGS "-d -p parser")
+FLEX_TARGET(openscad_lexer src/lexer.l ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/lexer.cxx DEFINES_FILE ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/lexer.hxx COMPILE_FLAGS ${WINCOMPAT})
+BISON_TARGET(openscad_parser src/parser.y ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/parser.cxx DEFINES_FILE ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/parser.hxx COMPILE_FLAGS "-d -p parser")
 ADD_FLEX_BISON_DEPENDENCY(openscad_lexer openscad_parser)
 
-FLEX_TARGET(comment_lexer src/comment_lexer.l ${CMAKE_CURRENT_BINARY_DIR}/comment_lexer.cxx DEFINES_FILE ${CMAKE_CURRENT_BINARY_DIR}/comment_lexer.hxx)
-BISON_TARGET(comment_parser src/comment_parser.y ${CMAKE_CURRENT_BINARY_DIR}/comment_parser.cxx DEFINES_FILE ${CMAKE_CURRENT_BINARY_DIR}/comment_parser.hxx COMPILE_FLAGS "-d -p comment_parser")
+FLEX_TARGET(comment_lexer src/comment_lexer.l ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/comment_lexer.cxx DEFINES_FILE ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/comment_lexer.hxx COMPILE_FLAGS ${WINCOMPAT})
+BISON_TARGET(comment_parser src/comment_parser.y ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/comment_parser.cxx DEFINES_FILE ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/comment_parser.hxx COMPILE_FLAGS "-d -p comment_parser")
 ADD_FLEX_BISON_DEPENDENCY(comment_lexer comment_parser)
 
 if(NOT HEADLESS)
+  if (APPLE AND EXISTS /usr/local/opt/qt)
+    list(APPEND CMAKE_PREFIX_PATH "/usr/local/opt/qt")
+  endif()
+
   set(CMAKE_AUTOMOC ON)
   set(CMAKE_AUTOUIC ON)
   set(CMAKE_AUTORCC ON)
-  find_package(Qt5 COMPONENTS Core Widgets OpenGL Concurrent REQUIRED QUIET)
+  find_package(Qt5 COMPONENTS Core Widgets Multimedia OpenGL Concurrent Network REQUIRED QUIET)
   message(STATUS "Qt5: ${Qt5_VERSION}")
   set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
@@ -92,39 +291,51 @@ if(NOT HEADLESS)
     set(CMAKE_POSITION_INDEPENDENT_CODE ON)
   endif()
 
-  add_definitions(-DUSE_QOPENGLWIDGET)
+  if (("${Qt5_VERSION}" VERSION_EQUAL "5.4") OR ("${Qt5_VERSION}" VERSION_GREATER "5.4"))
+    add_definitions(-DUSE_QOPENGLWIDGET)
+  endif()
 
   find_package(Qt5QScintilla 2.8.0 REQUIRED QUIET)
   message(STATUS "QScintilla: ${QT5QSCINTILLA_VERSION_STRING}")
   add_definitions(-DUSE_SCINTILLA_EDITOR)
   add_definitions(-DENABLE_MDI)
+
+  find_package(Qt5DBus QUIET)
+  if (Qt5DBus_FOUND)
+    message(STATUS "DBus input driver enabled")
+    add_definitions(-DENABLE_DBUS)
+    set(INPUT_DRIVER_DBUS_SOURCES src/input/DBusInputDriver.cc)
+    qt5_add_dbus_interface(INPUT_DRIVER_DBUS_SOURCES org.openscad.OpenSCAD.xml openscad_interface)
+    qt5_add_dbus_adaptor(INPUT_DRIVER_DBUS_SOURCES org.openscad.OpenSCAD.xml input/DBusInputDriver.h DBusInputDriver openscad_adaptor)
+  else()
+    message(STATUS "DBus input driver disabled as the QtDBus module could not be found.")
+  endif()
   
+  find_package(Qt5Gamepad QUIET)
+  if (Qt5Gamepad_FOUND)
+    message(STATUS "Gamepad input driver enabled")
+    set(GUI_SOURCES ${GUI_SOURCES} src/input/QGamepadInputDriver.cc)
+    add_definitions(-DENABLE_QGAMEPAD)
+  else()
+    message(STATUS "Gamepad input driver disabled as the Qt5Gamepad module could not be found.")
+  endif()
+
 #  add_definitions(${Qt5Widgets_DEFINITIONS})
 #  add_definitions(${Qt5OpenGL_DEFINITIONS})
 #  add_definitions(${Qt5Widgets_EXECUTABLE_COMPILE_FLAGS})
 #  add_definitions(${Qt5OpenGL_EXECUTABLE_COMPILE_FLAGS})
 
-  find_package(OpenGL REQUIRED QUIET)
-
-  find_package(GLEW REQUIRED QUIET)
-  message(STATUS "GLEW: ${GLEW_FOUND}")
-
-  find_package(OpenCSG REQUIRED QUIET)
-  message(STATUS "OpenCSG: ${OPENCSG_VERSION_STRING}")
 endif()
 
-# NULLGL - Allow us to build without OpenGL(TM). run 'cmake .. -DNULLGL=1'
-# Most tests will fail, but it can be used for testing/experiments
-if(NULLGL)
-  add_definitions(-DNULLGL)
-else()
-  add_definitions(-DENABLE_OPENCSG)
-endif()
-# -DENABLE_LIBZIP -DDEBUG
-add_definitions(-DENABLE_EXPERIMENTAL)
 
-# Stack size 8MB; github issue 116
-add_definitions(-DSTACKSIZE=8388608)
+# Setup ccache (if available) to speed up recompiles. It's especially useful
+# when switching back and forth between branches where large numbers of files
+# would otherwise need to be re-compiled each time.
+find_program(CCACHE_PATH ccache)
+if (CCACHE_PATH)
+  set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE ${CCACHE_PATH})
+  set_property(GLOBAL PROPERTY RULE_LAUNCH_LINK ${CCACHE_PATH})
+endif()
 
 #
 # Version
@@ -146,23 +357,45 @@ add_definitions(-DOPENSCAD_VERSION=${VERSION} -DOPENSCAD_SHORTVERSION=${OPENSCAD
 if (DEFINED OPENSCAD_DAY)
   add_definitions(-DOPENSCAD_DAY=${OPENSCAD_DAY})
 endif()
+if(DEFINED OPENSCAD_COMMIT)
+  add_definitions(-DOPENSCAD_COMMIT=${OPENSCAD_COMMIT})
+endif()
 
 #
 # Platform specific settings
 #
 if(APPLE)
   message(STATUS "Offscreen OpenGL Context - using Apple CGL")
-  set(PLATFORM_SOURCES src/PlatformUtils-mac.mm src/OffscreenContextCGL.mm src/imageutils-macosx.cc src/CocoaUtils.mm src/AppleEvents.cc src/EventFilter.cc)
+  set(PLATFORM_SOURCES src/PlatformUtils-mac.mm src/imageutils-macosx.cc src/CocoaUtils.mm)
+  if(NOT HEADLESS)
+    set(PLATFORM_SOURCES ${PLATFORM_SOURCES} src/AppleEvents.cc)
+  endif()
+  if(NULLGL)
+    add_definitions(-DOPENSCAD_OS="Mac OS X")
+  else()
+    set(PLATFORM_SOURCES ${PLATFORM_SOURCES} src/OffscreenContextCGL.mm)
+  endif()
   find_library(COCOA_LIBRARY Cocoa)
   set(PLATFORM_LIBS ${COCOA_LIBRARY})
 elseif(UNIX)
   message(STATUS "Offscreen OpenGL Context - using Unix GLX on X11")
-  set(PLATFORM_SOURCES src/OffscreenContextGLX.cc src/imageutils-lodepng.cc src/PlatformUtils-posix.cc)
-  find_library(X11_LIBRARY X11)
-  set(PLATFORM_LIBS ${X11_LIBRARY})
+  set(PLATFORM_SOURCES src/imageutils-lodepng.cc src/PlatformUtils-posix.cc)
+  if(NULLGL)
+    add_definitions(-DOPENSCAD_OS="Unix")
+  else()
+    set(PLATFORM_SOURCES ${PLATFORM_SOURCES} src/OffscreenContextGLX.cc)
+    find_library(X11_LIBRARY X11)
+    set(PLATFORM_LIBS ${X11_LIBRARY})
+  endif()
 elseif(WIN32)
+  add_definitions(-DNOGDI)
   message(STATUS "Offscreen OpenGL Context - using Microsoft WGL")
-  set(PLATFORM_SOURCES src/OffscreenContextWGL.cc src/imageutils-lodepng.cc src/PlatformUtils-win.cc)
+  set(PLATFORM_SOURCES src/imageutils-lodepng.cc src/PlatformUtils-win.cc)
+  if(NULLGL)
+    add_definitions(-DOPENSCAD_OS="Windows")
+  else()
+    set(PLATFORM_SOURCES ${PLATFORM_SOURCES} src/OffscreenContextWGL.cc)
+  endif()
 endif()
 
 set(CORE_SOURCES
@@ -173,12 +406,12 @@ set(CORE_SOURCES
   src/handle_dep.cc 
   src/value.cc 
   src/calc.cc 
-  src/grid.cc 
   src/hash.cc 
-  src/expr.cc 
+  src/expr.cc
+  src/degree_trig.cc
   src/func.cc 
   src/function.cc 
-  src/stackcheck.cc 
+  src/stackcheck.h
   src/localscope.cc 
   src/module.cc 
   src/FileModule.cc 
@@ -191,8 +424,10 @@ set(CORE_SOURCES
   src/node.cc 
   src/NodeVisitor.cc 
   src/context.cc 
+  src/builtincontext.cc
   src/modcontext.cc 
   src/evalcontext.cc 
+  src/version.cc
   src/feature.cc
   src/csgnode.cc 
   src/CSGTreeNormalizer.cc 
@@ -208,7 +443,6 @@ set(CORE_SOURCES
   src/control.cc 
   src/render.cc 
   src/rendersettings.cc 
-  src/settings.cc
   src/dxfdata.cc 
   src/dxfdim.cc 
   src/offset.cc 
@@ -222,13 +456,16 @@ set(CORE_SOURCES
   src/FontCache.cc
   src/DrawingCallback.cc
   src/FreetypeRenderer.cc
-  src/lodepng.cpp
+  src/ext/lodepng/lodepng.cpp
   src/PlatformUtils.cc 
   src/libsvg/circle.cc
   src/libsvg/ellipse.cc
   src/libsvg/group.cc
   src/libsvg/libsvg.cc
   src/libsvg/line.cc
+  src/libsvg/text.cc
+  src/libsvg/tspan.cc
+  src/libsvg/data.cc
   src/libsvg/path.cc
   src/libsvg/polygon.cc
   src/libsvg/polyline.cc
@@ -238,9 +475,9 @@ set(CORE_SOURCES
   src/libsvg/transformation.cc
   src/libsvg/util.cc
   src/clipper-utils.cc
-  src/assignment.cc
+  src/Assignment.cc
   src/annotation.cc 
-  src/polyclipping/clipper.cpp
+  src/ext/polyclipping/clipper.cpp
   ${PLATFORM_SOURCES}
   ${FLEX_openscad_lexer_OUTPUTS}
   ${BISON_openscad_parser_OUTPUTS}
@@ -250,11 +487,13 @@ set(CORE_SOURCES
 set(NOCGAL_SOURCES
   src/builtin.cc 
   src/import.cc
+  src/import_3mf.cc
   src/import_stl.cc
   src/import_amf.cc
   src/import_off.cc
   src/import_svg.cc
   src/export.cc
+  src/export_3mf.cc
   src/export_stl.cc
   src/export_amf.cc
   src/export_off.cc
@@ -282,51 +521,84 @@ set(CGAL_SOURCES
   src/svg.cc
   src/GeometryEvaluator.cc)
 
-include_directories("src/libtess2/Include")
+include_directories("src/ext/libtess2/Include")
 set(COMMON_SOURCES
   src/nodedumper.cc 
   src/GeometryCache.cc 
   src/clipper-utils.cc 
   src/Tree.cc
-  src/polyclipping/clipper.cpp
-  src/libtess2/Source/bucketalloc.c
-  src/libtess2/Source/dict.c
-  src/libtess2/Source/geom.c
-  src/libtess2/Source/mesh.c
-  src/libtess2/Source/priorityq.c
-  src/libtess2/Source/sweep.c
-  src/libtess2/Source/tess.c
+  src/comment.cpp
+  src/parameter/parameterset.cpp
+  src/ext/polyclipping/clipper.cpp
+  src/ext/libtess2/Source/bucketalloc.c
+  src/ext/libtess2/Source/dict.c
+  src/ext/libtess2/Source/geom.c
+  src/ext/libtess2/Source/mesh.c
+  src/ext/libtess2/Source/priorityq.c
+  src/ext/libtess2/Source/sweep.c
+  src/ext/libtess2/Source/tess.c
   src/Tree.cc)
 
 #
 # Offscreen OpenGL context source code
 #
-set(OFFSCREEN_SOURCES
-  src/GLView.cc
-  src/OffscreenView.cc
-  src/imageutils.cc
-  src/fbo.cc
-  src/system-gl.cc
-  src/export_png.cc
-  src/CGALRenderer.cc
-  src/ThrownTogetherRenderer.cc
-  src/renderer.cc
-  src/render.cc
-  src/OpenCSGRenderer.cc)
+if(NULLGL)
+  message(STATUS "NULLGL is set. Overriding OpenGL(TM) settings")
+  set(OFFSCREEN_SOURCES
+    src/NULLGL.cc # contains several 'nullified' versions of above .cc files
+    src/OffscreenView.cc
+    src/OffscreenContextNULL.cc
+    src/export_png.cc
+    src/${OFFSCREEN_IMGUTILS_SOURCE}
+    src/imageutils.cc
+    src/renderer.cc
+    src/render.cc)
+else()
+  set(OFFSCREEN_SOURCES
+    src/GLView.cc
+    src/OffscreenView.cc
+    src/imageutils.cc
+    src/fbo.cc
+    src/system-gl.cc
+    src/export_png.cc
+    src/CGALRenderer.cc
+    src/ThrownTogetherRenderer.cc
+    src/renderer.cc
+    src/render.cc
+    src/OpenCSGRenderer.cc)
+endif()
+
+
+if(UNIX AND (NOT APPLE) AND (NOT HEADLESS))
+  set(PLATFORM_INPUT_DRIVER_SOURCES src/input/JoystickInputDriver.cc)
+  add_definitions(-DENABLE_JOYSTICK)
+endif()
+
+set(INPUT_DRIVER_SOURCES
+  ${PLATFORM_INPUT_DRIVER_SOURCES}
+  ${INPUT_DRIVER_DBUS_SOURCES})
 
 set(GUI_SOURCES
+  ${GUI_SOURCES}
   src/mainwin.cc
   src/OpenSCADApp.cc
+  src/EventFilter.h
   src/WindowManager.cc
+  src/settings.cc
   src/Preferences.cc
+  src/SettingsWriter.cc
   src/FontListDialog.cc
   src/FontListTableView.cc
+  src/OctoPrint.cc
+  src/PrintInitDialog.cc
+  src/PrintService.cc
   src/LibraryInfoDialog.cc
   src/OpenCSGWarningDialog.cc
   src/ProgressWidget.cc
   src/AutoUpdater.cc
   src/QGLView.cc
   src/Dock.cc
+  src/Console.cc
   src/UIUtils.cc
   src/scadlexer.cpp
   src/highlighter.cc
@@ -337,39 +609,37 @@ set(GUI_SOURCES
   src/launchingscreen.cc
   src/QWordSearchField.cc
   src/QSettingsCached.cc
-  src/comment.cpp
   src/parameter/ParameterWidget.cc
   src/parameter/groupwidget.cpp
+  src/parameter/ignoreWheelWhenNotFocused.cpp
   src/parameter/parametercheckbox.cpp
   src/parameter/parametercombobox.cpp
   src/parameter/parameterextractor.cpp
   src/parameter/parameterobject.cpp
-  src/parameter/parameterset.cpp
   src/parameter/parameterslider.cpp
   src/parameter/parameterspinbox.cpp
   src/parameter/parametertext.cpp
   src/parameter/parametervector.cpp
   src/parameter/parametervirtualwidget.cpp
+  src/scadapi.cc
+  src/tabmanager.cc
+  src/tabwidget.cc
+  src/input/AxisConfigWidget.cc
+  src/input/ButtonConfigWidget.cc
+  src/input/InputDriver.cc
+  src/input/InputDriverManager.cc
+  src/input/InputEventMapper.cc
+  src/input/WheelIgnorer.cc
+  ${INPUT_DRIVER_SOURCES}
   )
 
 # header-only code
 set(GUI_HEADERS
   src/AboutDialog.h
   src/MainWindow.h
+  src/Network.h
+  src/NetworkSignal.h
   )
-
-if(NULLGL)
-  message(STATUS "NULLGL is set. Overriding previous OpenGL(TM) settings")
-  set(OFFSCREEN_SOURCES
-    src/NULLGL.cc # contains several 'nullified' versions of above .cc files
-    src/OffscreenView.cc
-    src/OffscreenContextNULL.cc
-    src/export_png.cc
-    src/${OFFSCREEN_IMGUTILS_SOURCE}
-    src/imageutils.cc
-    src/renderer.cc
-    src/render.cc)
-endif()
 
 #file(GLOB Headers src/*.h src/*.hpp src/polyclipping/*.hpp)
 #list(REMOVE_ITEM Headers ${CMAKE_SOURCE_DIR}/src/SparkleAutoUpdater.h)
@@ -384,11 +654,19 @@ else()
   list(APPEND Sources ${GUI_SOURCES} ${GUI_HEADERS})
 endif()
 
-set(RESOURCE_FILES icons/OpenSCAD.icns)
+if (SNAPSHOT)
+  add_definitions(-DOPENSCAD_SNAPSHOT)
+  set(RESOURCE_FILES icons/icon-nightly.icns)
+else()
+  set(RESOURCE_FILES icons/OpenSCAD.icns)
+endif()
+
+if(ENABLE_SPNAV)
+  add_definitions(-DENABLE_SPNAV)
+  list(APPEND Sources src/input/SpaceNavInputDriver.cc)
+endif()
 
 add_executable(OpenSCAD ${Sources} ${RESOURCE_FILES})
-
-# FIXME: snapshot, ICON = icons/icon-nightly.icns
 
 if(APPLE)
   set_target_properties(OpenSCAD PROPERTIES
@@ -399,25 +677,25 @@ if(APPLE)
     MACOSX_BUNDLE_SHORT_VERSION_STRING 2017.03
     RESOURCE "${RESOURCE_FILES}"
   )
-endif(APPLE)
-
-set(COMMON_LIBRARIES
-    ${CGAL_LIBRARY}
-    ${GMP_LIBRARIES}
-    ${MPFR_LIBRARIES}
-    ${Boost_LIBRARIES}
-    ${HARFBUZZ_LIBRARIES}
-    ${FONTCONFIG_LIBRARIES}
-    ${FREETYPE_LIBRARIES}
-    ${GLIB2_LIBRARIES}
-    ${LIBXML2_LIBRARIES}
-    ${OPENGL_LIBRARIES}
-    ${GLEW_LIBRARY}
-    ${OPENCSG_LIBRARY}
-    ${PLATFORM_LIBS})
-
-target_link_libraries(OpenSCAD ${COMMON_LIBRARIES})
-if(NOT HEADLESS)
-  target_link_libraries(OpenSCAD Qt5::Core Qt5::Widgets Qt5::OpenGL Qt5::Concurrent ${QT5QSCINTILLA_LIBRARY})
+elseif(UNIX)
+  set_target_properties(OpenSCAD PROPERTIES
+    OUTPUT_NAME openscad
+  )
+elseif(MSVC)
+  set_target_properties(OpenSCAD PROPERTIES
+    LINK_FLAGS "-subsystem:windows -ENTRY:mainCRTStartup -stack:8388608"
+  )
 endif()
 
+if(ENABLE_SPNAV)
+  target_link_libraries(OpenSCAD spnav)
+endif()
+
+target_link_libraries(OpenSCAD PRIVATE ${COMMON_LIBRARIES} ${PLATFORM_LIBS})
+if(NOT HEADLESS)
+  target_link_libraries(OpenSCAD PRIVATE Qt5::Core Qt5::Widgets Qt5::Multimedia Qt5::OpenGL Qt5::Concurrent Qt5::Network ${QT5QSCINTILLA_LIBRARY} ${Qt5DBus_LIBRARIES} ${Qt5Gamepad_LIBRARIES})
+endif()
+
+if(INFO)
+  include(info)
+endif()

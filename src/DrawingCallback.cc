@@ -23,7 +23,7 @@
  *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-#include <math.h>
+#include <cmath>
 
 #include <iostream>
 #include <algorithm>
@@ -32,7 +32,7 @@
 #include "DrawingCallback.h"
 
 DrawingCallback::DrawingCallback(unsigned long fn) :
-	pen(Vector2d(0, 0)), offset(Vector2d(0, 0)), advance(Vector2d(0, 0)), fn(fn)
+	pen(Vector2d(0, 0)), offset(Vector2d(0, 0)), advance(Vector2d(0, 0)), fn(fn), polygon(nullptr)
 {
 }
 

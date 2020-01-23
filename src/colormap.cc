@@ -242,7 +242,7 @@ Color4f ColorMap::getColorHSV(const Color4f &col)
 Color4f ColorMap::getContrastColor(const Color4f &col)
 {
 	Color4f hsv = ColorMap::getColorHSV(col);
-	float Y = 0.2126 * col[0] + 0.7152 * col[1] + 0.0722 * col[2];
+	float Y = 0.2126f * col[0] + 0.7152f * col[1] + 0.0722f * col[2];
 	float S = hsv[1];
 
 	if (S < 0.5) {
@@ -281,7 +281,7 @@ void ColorMap::enumerateColorSchemesInPath(colorscheme_set_t &result_set, const 
 	    }
 	    
 	    RenderColorScheme *colorScheme = new RenderColorScheme(path);
-	    if (colorScheme->valid() && (findColorScheme(colorScheme->name()) == 0)) {
+	    if (colorScheme->valid() && (findColorScheme(colorScheme->name()) == nullptr)) {
 		result_set.insert(colorscheme_set_t::value_type(colorScheme->index(), shared_ptr<RenderColorScheme>(colorScheme)));
 		PRINTDB("Found file '%s' with color scheme '%s' and index %d",
 			colorScheme->path() % colorScheme->name() % colorScheme->index());

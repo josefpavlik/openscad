@@ -55,8 +55,6 @@ namespace ClipperUtils {
  */
 	Polygon2d *toPolygon2d(const ClipperLib::PolyTree &poly)
 	{
-		const double CLEANING_DISTANCE = 0.001 * CLIPPER_SCALE;
-
 		auto result = new Polygon2d;
 		auto node = poly.GetFirst();
 		while (node) {
@@ -66,7 +64,7 @@ namespace ClipperUtils {
 			outline.positive = Orientation(node->Contour);
 
 			ClipperLib::Path cleaned_path;
-			ClipperLib::CleanPolygon(node->Contour, cleaned_path, CLEANING_DISTANCE);
+			ClipperLib::CleanPolygon(node->Contour, cleaned_path);
 
 			// CleanPolygon can in some cases reduce the polygon down to no vertices
 			if (cleaned_path.size() >= 3)  {
@@ -244,7 +242,7 @@ namespace ClipperUtils {
 			fill_minkowski_insides(lhs, rhs, minkowski_terms);
 			fill_minkowski_insides(rhs, lhs, minkowski_terms);
 
-			// This union operation must be performed at each interation since the minkowski_terms
+			// This union operation must be performed at each iteration since the minkowski_terms
 			// now contain lots of small quads
 			c.Clear();
 			c.AddPaths(minkowski_terms, ClipperLib::ptSubject, true);

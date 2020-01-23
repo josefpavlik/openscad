@@ -30,10 +30,10 @@
 #include <QFileDialog>
 #include <QDesktopServices>
 
-#include "qtgettext.h"
+#include "version.h"
 #include "UIUtils.h"
+#include "qtgettext.h"
 #include "PlatformUtils.h"
-#include "openscad.h"
 #include "QSettingsCached.h"
 
 
@@ -56,6 +56,32 @@ QFileInfo UIUtils::openFile(QWidget *parent)
     last_dirname = last_dir.path();
     settings.setValue("lastOpenDirName", last_dirname);
     return fileInfo;
+}
+
+QFileInfoList UIUtils::openFiles(QWidget *parent)
+{
+    QSettingsCached settings;
+    QString last_dirname = settings.value("lastOpenDirName").toString();
+    QStringList new_filenames = QFileDialog::getOpenFileNames(parent, "Open File",
+	    last_dirname, "OpenSCAD Designs (*.scad *.csg)");
+
+    QFileInfoList fileInfoList;
+    for(QString filename: new_filenames)
+    {
+		if(filename.isEmpty()) {
+			continue;
+		}
+		fileInfoList.append(QFileInfo(filename));
+    }
+
+    if(!fileInfoList.isEmpty())
+    {
+	    QDir last_dir = fileInfoList[fileInfoList.size() - 1].dir(); // last_dir is set to directory of last choosen valid file
+	    last_dirname = last_dir.path();
+	    settings.setValue("lastOpenDirName", last_dirname);
+	}
+
+    return fileInfoList;
 }
 
 QStringList UIUtils::recentFiles()
@@ -133,7 +159,7 @@ QFileInfoList UIUtils::exampleFiles(const QString &category)
 
 void UIUtils::openHomepageURL()
 {
-    QDesktopServices::openUrl(QUrl("http://openscad.org/"));
+    QDesktopServices::openUrl(QUrl("https://www.openscad.org/"));
 }
 
 static void openVersionedURL(QString url)
@@ -143,10 +169,14 @@ static void openVersionedURL(QString url)
 
 void UIUtils::openUserManualURL()
 {
-    openVersionedURL("http://www.openscad.org/documentation.html?version=%1");
+    openVersionedURL("https://www.openscad.org/documentation.html?version=%1");
 }
 
 void UIUtils::openCheatSheetURL()
 {
-    openVersionedURL("http://www.openscad.org/cheatsheet/index.html?version=%1");
+#ifdef OPENSCAD_SNAPSHOT
+    openVersionedURL("https://www.openscad.org/cheatsheet/snapshot.html?version=%1");
+#else
+    openVersionedURL("https://www.openscad.org/cheatsheet/index.html?version=%1");
+#endif
 }

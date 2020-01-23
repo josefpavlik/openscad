@@ -35,7 +35,7 @@
 
 size_t AbstractNode::idx_counter;
 
-AbstractNode::AbstractNode(const ModuleInstantiation *mi) : modinst(mi), idx(idx_counter++)
+AbstractNode::AbstractNode(const ModuleInstantiation *mi) : modinst(mi), progress_mark(0), idx(idx_counter++)
 {
 }
 
@@ -52,6 +52,11 @@ std::string AbstractNode::toString() const
 std::string GroupNode::name() const
 {
 	return "group";
+}
+
+std::string ListNode::name() const
+{
+	return "list";
 }
 
 std::string RootNode::name() const

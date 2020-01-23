@@ -11,11 +11,12 @@ class ModuleInstantiation : public ASTNode
 public:
 	ModuleInstantiation(const std::string &name, const AssignmentList &args = AssignmentList(), const std::string &source_path = std::string(), const Location &loc = Location::NONE)
 		: ASTNode(loc), arguments(args), tag_root(false), tag_highlight(false), tag_background(false), modname(name), modpath(source_path) { }
-	virtual ~ModuleInstantiation();
+	~ModuleInstantiation();
 
-	virtual std::string dump(const std::string &indent) const;
-	class AbstractNode *evaluate(const class Context *ctx) const;
-	std::vector<AbstractNode*> instantiateChildren(const Context *evalctx) const;
+	virtual void print(std::ostream &stream, const std::string &indent, const bool inlined) const;
+	void print(std::ostream &stream, const std::string &indent) const override { print(stream, indent, false); };
+	class AbstractNode *evaluate(const std::shared_ptr<Context> ctx) const;
+	std::vector<AbstractNode*> instantiateChildren(const std::shared_ptr<Context> evalctx) const;
 
 	// This is only needed for import() and the deprecated *_extrude() modules
 	const std::string &path() const { return this->modpath; }
@@ -39,11 +40,10 @@ protected:
 
 class IfElseModuleInstantiation : public ModuleInstantiation {
 public:
-	IfElseModuleInstantiation(shared_ptr<class Expression> expr, const std::string &source_path, const Location &loc) : ModuleInstantiation("if", AssignmentList{Assignment("", expr)}, source_path, loc) { }
-	virtual ~IfElseModuleInstantiation();
-	std::vector<AbstractNode*> instantiateElseChildren(const Context *evalctx) const;
-	virtual std::string dump(const std::string &indent) const;
+	IfElseModuleInstantiation(shared_ptr<class Expression> expr, const std::string &source_path, const Location &loc) : ModuleInstantiation("if", AssignmentList{assignment("", expr)}, source_path, loc) { }
+	~IfElseModuleInstantiation();
+	std::vector<AbstractNode*> instantiateElseChildren(const std::shared_ptr<Context> evalctx) const;
+	void print(std::ostream &stream, const std::string &indent, const bool inlined) const final;
 
 	LocalScope else_scope;
 };
-

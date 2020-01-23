@@ -14,15 +14,9 @@ public:
 	typedef std::vector<Feature *> list_t;
 	typedef list_t::iterator iterator;
 
-	static const Feature ExperimentalAssertExpression;
-	static const Feature ExperimentalEchoExpression;
-        static const Feature ExperimentalEachExpression;
-        static const Feature ExperimentalElseExpression;
-        static const Feature ExperimentalForCExpression;
-        static const Feature ExperimentalAmfImport;
-        static const Feature ExperimentalSvgImport;
-        static const Feature ExperimentalCustomizer;
-
+	static const Feature ExperimentalInputDriverDBus;
+	static const Feature ExperimentalFunctionLiterals;
+	static const Feature ExperimentalLazyUnion;
 
 	const std::string& get_name() const;
 	const std::string& get_description() const;
@@ -33,7 +27,7 @@ public:
 	static iterator begin();
 	static iterator end();
     
-	static void dump_features();
+	static std::string features();
 	static void enable_feature(const std::string &feature_name, bool status = true);
 
 private:
@@ -54,7 +48,7 @@ class ExperimentalFeatureException : public EvaluationException
 {
 public:
 	static void check(const Feature &feature);
-	virtual ~ExperimentalFeatureException() throw();
+	~ExperimentalFeatureException() throw();
 
 private:
 	ExperimentalFeatureException(const std::string &what_arg);

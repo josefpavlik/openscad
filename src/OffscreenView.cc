@@ -1,6 +1,6 @@
 #include "OffscreenView.h"
 #include "system-gl.h"
-#include <math.h>
+#include <cmath>
 #include <stdio.h>
 #include <string.h>
 #include <cstdlib>
@@ -39,10 +39,5 @@ bool OffscreenView::save(std::ostream &output)
 
 std::string OffscreenView::getRendererInfo() const
 {
-  std::stringstream out;
-
-  out << glew_dump()
-      << offscreen_context_getinfo(this->ctx);
-
-  return out.str();
+  return STR(glew_dump() << offscreen_context_getinfo(this->ctx));
 }
