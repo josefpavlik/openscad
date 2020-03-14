@@ -134,7 +134,7 @@
 unsigned int GuiLocker::gui_locked = 0;
 
 static char copyrighttext[] =
-	"Copyright (C) 2009-2019 The OpenSCAD Developers\n\n"
+	"Copyright (C) 2009-2020 The OpenSCAD Developers\n\n"
 	"This program is free software; you can redistribute it and/or modify "
 	"it under the terms of the GNU General Public License as published by "
 	"the Free Software Foundation; either version 2 of the License, or "
@@ -1119,8 +1119,12 @@ void MainWindow::instantiateRoot()
 		
 		if (this->absolute_root_node) {
 			// Do we have an explicit root node (! modifier)?
-			if (!(this->root_node = find_root_tag(this->absolute_root_node))) {
+			const Location *nextLocation = nullptr;
+			if (!(this->root_node = find_root_tag(this->absolute_root_node, &nextLocation))) {
 				this->root_node = this->absolute_root_node;
+			}
+			if (nextLocation) {
+				PRINTB("WARNING: More than one Root Modifier (!) %s", nextLocation->toRelativeString(top_ctx->documentPath()));
 			}
 
 			// FIXME: Consider giving away ownership of root_node to the Tree, or use reference counted pointers
